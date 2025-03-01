@@ -1,0 +1,31 @@
+parallel: False
+seed: 123
+batch_size: 64
+learning_rate: 0.0015
+weight_decay: 0.0001
+epochs: 100
+
+num_conv_layers: 2      
+hidden_dim: 64          # GNN网络输出的节点特征维度
+n_steps: 2              # GNN迭代次数（层数）
+n_etypes: 5             # CPG边类型
+bert_size: 768          # codebert维度
+reduced_size: 128       # 节点特征降维
+dense_size: 64          
+num_classes: 2
+
+module: 'CausalGNN'        # 模型名称
+
+lambda_causal: 1.0
+lambda_spurious: 0.5
+lambda_context: 0.5
+lambda_contrastive: 0.5
+
+interpreter: True
+flaw_info: './data/flaw_line_info.pkl'
+
+wo_domanate: False
+wo_post_dominate: False
+wo_reaching_define: False
+
+
