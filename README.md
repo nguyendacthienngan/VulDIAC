@@ -8,8 +8,8 @@ This is the repository of VulDIAC，
 
 To investigate the effectiveness of VulDIAC, we adopt two vulnerability datasets from:
 
-- FFMPeg+Qemu [1]: https://drive.google.com/file/d/1x6hoF7G-tSYxg8AFybggypLZgMGDNHfF
-- Fan et al. [2]: https://drive.google.com/file/d/1-0VhnHBp9IGh90s2wCNjeCMuy70HPl8X/view?usp=sharing
+- FFmpeg+Qemu [1]: https://drive.google.com/file/d/1x6hoF7G-tSYxg8AFybggypLZgMGDNHfF
+- Big-Vul [2]: https://drive.google.com/file/d/1-0VhnHBp9IGh90s2wCNjeCMuy70HPl8X/view?usp=sharing
 
 
 ## Requiremnet
