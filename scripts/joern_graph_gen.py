@@ -1,179 +1,114 @@
-import os, sys
-import glob
-import argparse
+import os, glob, argparse, subprocess
 from multiprocessing import Pool
 from functools import partial
-import subprocess
 
-
-def get_all_file(path):
-    path = path[0]
-    file_list = []
-    path_list = os.listdir(path)
-    for path_tmp in path_list:
-        full = path + path_tmp + '/'
-        for file in os.listdir(full):
-            file_list.append(file)
-    return file_list
-
+JOERN_HOME = os.environ.get("JOERN_HOME", "/kaggle/working/joern-2.0.72")
+JOERN_PARSE = os.path.join(JOERN_HOME, "joern-parse")
+JOERN_EXPORT = os.path.join(JOERN_HOME, "joern-export")
+JOERN = os.path.join(JOERN_HOME, "joern")
 
 def parse_options():
-    parser = argparse.ArgumentParser(description='Extracting Cpgs.')
-    parser.add_argument('-i ', '--input', help='The dir path of input', type=str,
-                        default='/home/all_data_preprocess/4-parse_res/our_data/vul/')
-    parser.add_argument('-o ', '--output', help='The dir path of output', type=str,
-                        default='/home/all_data_preprocess/6-json/our_data/6-our-vul/')
-    parser.add_argument('-t ', '--type', help='The type of procedures: parse or export', type=str, default='export')
-    parser.add_argument('-r ', '--repr', help='The type of representation: pdg or lineinfo_json', type=str,
-                        default='lineinfo_json')
-    args = parser.parse_args()
-    return args
+    p = argparse.ArgumentParser(description='Extracting CPGs.')
+    p.add_argument('-i', '--input', help='The dir path of input', type=str, default='/kaggle/working/c_src/')
+    p.add_argument('-o', '--output', help='The dir path of output', type=str, default='/kaggle/working/exports/')
+    p.add_argument('-t', '--type', help='The type of procedures: parse or export', type=str, default='export', choices=['parse','export'])
+    p.add_argument('-r', '--repr', help='The type of representation: pdg or lineinfo_json', type=str, default='lineinfo_json',
+                   choices=['pdg','cpg','cpg14','cfg','lineinfo_json'])
+    p.add_argument('--language', type=str, default='c')   # cho joern-parse
+    p.add_argument('--pool', type=int, default=4)         # Kaggle nên <=4
+    return p.parse_args()
 
+def ensure_dir(path):
+    if path and not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
 
-def joern_parse(file, outdir):
-    record_txt = os.path.join(outdir, "parse_res.txt")
-    if not os.path.exists(record_txt):
-        os.system("touch " + record_txt)
-    with open(record_txt, 'r') as f:
-        rec_list = f.readlines()
-    name = file.split('/')[-1].split('.')[0]
-    if name + '\n' in rec_list:
-        print(" ====> has been processed: ", name)
-        return
-    print(' ----> now processing: ', name)
-    out = outdir + name + '.bin'
-    if os.path.exists(out):
-        return
-    os.environ['file'] = str(file)
-    os.environ['out'] = str(out)  # parse后的文件名与source文件名称一致
-    # /home/itachi/software/joern-cli/joern-parse 为joern路径
-    os.system('/home/itachi/software/joern-2-0-72/joern-cli/joern-parse $file --language c -o $out')
-    with open(record_txt, 'a+') as f:
-        f.writelines(name + '\n')
+def joern_parse(src_file, outdir, language='c'):
+    ensure_dir(outdir)
+    rec = os.path.join(outdir, "parse_res.txt")
+    open(rec, 'a').close()
+    name = os.path.splitext(os.path.basename(src_file))[0]
+    with open(rec,'r') as f: done = set(x.strip() for x in f)
+    if name in done: return
+    outbin = os.path.join(outdir, name + '.bin')
+    if os.path.exists(outbin): return
+    print(f"[parse] {name}")
+    subprocess.run([JOERN_PARSE, src_file, '--language', language, '-o', outbin],
+                   check=True)
+    with open(rec,'a') as f: f.write(name+'\n')
 
+def _move_first_child_with_prefix(src_dir, prefix, out_dot):
+    try:
+        for entry in os.listdir(src_dir):
+            if entry.startswith(prefix):
+                src = os.path.join(src_dir, entry)
+                subprocess.run(['mv', src, out_dot], check=True)
+                subprocess.run(['rm','-rf', src_dir], check=True)
+                return
+    except Exception:
+        pass
 
-def joern_export(bin, outdir, repr):
-    record_txt = os.path.join(outdir, "export_res.txt")
-    if not os.path.exists(record_txt):
-        os.system("touch " + record_txt)
-    with open(record_txt, 'r') as f:
-        rec_list = f.readlines()
+def joern_export(bin_file, outdir, repr_):
+    ensure_dir(outdir)
+    rec = os.path.join(outdir, "export_res.txt")
+    open(rec,'a').close()
+    name = os.path.basename(bin_file).replace('.bin','')
+    with open(rec,'r') as f: done = set(x.strip() for x in f)
+    if name in done: return
+    print(f"[export:{repr_}] {name}")
+    outbase = os.path.join(outdir, name)
 
-    name = bin.split('/')[-1].replace(".bin", "")
-    out = os.path.join(outdir, name)
-    if name + '\n' in rec_list:
-        print(" ====> has been processed: ", name)
-        return
-    print(' ----> now processing: ', name)
-    os.environ['bin'] = str(bin)
-    os.environ['out'] = str(out)
+    if repr_ in ['pdg','cpg','cpg14','cfg']:
+        # joern-export path
+        args = [JOERN_EXPORT, bin_file, '--repr', repr_, '-o', outbase]
+        # cfg đôi khi cần --out thay vì -o tùy version, nhưng 2.0.72 chấp nhận -o
+        subprocess.run(args, check=True)
 
-    if repr == 'pdg':
-        os.system('/home/itachi/software/joern-2-0-72/joern-cli/joern-export $bin' + " --repr " + "pdg" + ' -o $out')  # cpg 改成 pdg
-        try:
-            pdg_list = os.listdir(out)
-            for pdg in pdg_list:
-                if pdg.startswith("0-pdg"):
-                    file_path = os.path.join(out, pdg)
-                    os.system("mv " + file_path + ' ' + out + '.dot')
-                    os.system("rm -rf " + out)
-                    break
-        except:
-            pass
-    
-    elif repr == 'cpg':
-        os.system('/home/itachi/software/joern-2-0-72/joern-cli/joern-export $bin' + " --repr " + "cpg" + ' -o $out')  # cpg 改成 pdg
-        try:
-            cpg = name + '.c'
-            file_path = os.path.join(out, cpg, '_global_.dot')
-            os.system("mv " + file_path + ' ' + out + '.dot')
-            os.system("rm -rf " + out)
-        except:
-            pass
-     
-    elif repr == 'cpg14':
-        os.system('/home/itachi/software/joern-2-0-72/joern-cli/joern-export $bin' + " --repr " + "cpg14" + ' -o $out')  # cpg 改成 pdg
-        try:
-            cpg_list = os.listdir(out)
-            for cpg in cpg_list:
-                if cpg.startswith("1-cpg"):
-                    file_path = os.path.join(out, cpg)
-                    os.system("mv " + file_path + ' ' + out + '.dot')
-                    os.system("rm -rf " + out)
-                    break
-        except:
-            pass
-        
-    elif repr == 'cfg':
-        os.system('/home/itachi/software/joern-2-0-72/joern-cli/joern-export $bin' + " --repr " + "cfg" + ' --out $out')  # cpg 改成 pdg
-        try:
-            cfg_list = os.listdir(out)
-            for cfg in cfg_list:
-                if cfg.startswith("0-cfg"):
-                    file_path = os.path.join(out, cfg)
-                    os.system("mv " + file_path + ' ' + out + '.dot')
-                    os.system("rm -rf " + out)
-                    break
-        except:
-            pass    
-        
+        # Gom dot ra một file .dot như script gốc làm
+        if repr_ == 'pdg':
+            _move_first_child_with_prefix(outbase, '0-pdg', outbase+'.dot')
+        elif repr_ == 'cpg':
+            # tìm *_global_.dot như script gốc
+            cfile_dir = os.path.join(outbase, name + '.c')
+            candidate = os.path.join(cfile_dir, '_global_.dot')
+            if os.path.exists(candidate):
+                subprocess.run(['mv', candidate, outbase+'.dot'], check=True)
+                subprocess.run(['rm','-rf', outbase], check=True)
+        elif repr_ == 'cpg14':
+            _move_first_child_with_prefix(outbase, '1-cpg', outbase+'.dot')
+        elif repr_ == 'cfg':
+            _move_first_child_with_prefix(outbase, '0-cfg', outbase+'.dot')
+
     else:
-        # pwd = os.getcwd()
-        if out[-4:] != 'json':
-            out += '.json'
-        joern_process = subprocess.Popen(["/home/itachi/software/joern-2-0-72/joern-cli/joern"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, shell=True, encoding='utf-8')
-        import_cpg_cmd = f"importCpg(\"{bin}\")\r"
-        script_path = f"/home/itachi/software/joern-2-0-72/joern-cli/scripts/graph/graph-for-funcs.sc"
-        run_script_cmd = f"cpg.runScript(\"{script_path}\").toString() |> \"{out}\"\r"  # json
-        cmd = import_cpg_cmd + run_script_cmd
-        ret, err = joern_process.communicate(cmd)
-        print(ret, err)
+        # lineinfo_json: chạy joern non-interactive và gọi script Scala
+        outjson = outbase + '.json'
+        script_path = os.path.join(JOERN_HOME, 'scripts', 'graph', 'graph-for-funcs.sc')
+        # Một số version đổi API; nếu thiếu script này bạn có thể dùng cơ chế --script (interpreter)
+        cmd = f'importCpg("{bin_file}")\n' \
+              f'cpg.runScript("{script_path}").toString() |> "{outjson}"\n'
+        # chạy joern và feed lệnh
+        proc = subprocess.Popen([JOERN], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout, stderr = proc.communicate(cmd)
+        if proc.returncode != 0:
+            raise RuntimeError(f"joern script failed: {stderr}\n{stdout}")
 
-    len_outdir = len(glob.glob(outdir + '*'))
-    print('--------------> len of outdir ', len_outdir)
-    with open(record_txt, 'a+') as f:
-        f.writelines(name + '\n')
-
+    with open(rec,'a') as f: f.write(name+'\n')
 
 def main():
-    # joern_path = '/home/itachi/software/joern-cli'
-    # os.chdir(joern_path)
     args = parse_options()
-    type = args.type
-    repr = args.repr
+    inp = args.input if args.input.endswith('/') else args.input + '/'
+    out = args.output if args.output.endswith('/') else args.output + '/'
+    ensure_dir(out)
 
-    input_path = args.input
-    output_path = args.output
-
-    if input_path[-1] == '/':
-        input_path = input_path
+    if args.type == 'parse':
+        files = glob.glob(inp + '*.c')
+        with Pool(args.pool) as pool:
+            pool.map(partial(joern_parse, outdir=os.path.dirname(out), language=args.language), files)
+    elif args.type == 'export':
+        bins = glob.glob(inp + '*.bin')
+        with Pool(args.pool) as pool:
+            pool.map(partial(joern_export, outdir=out, repr_=args.repr), bins)
     else:
-        input_path += '/'
+        raise ValueError("type must be parse or export")
 
-    if output_path[-1] == '/':
-        output_path = output_path
-    else:
-        output_path += '/'
-
-    pool_num = 20
-    pool = Pool(pool_num)
-
-    if type == 'parse':
-        # files = get_all_file(input_path)
-        files = glob.glob(input_path + '*.c')
-        pool.map(partial(joern_parse, outdir=output_path), files)
-
-    elif type == 'export':
-        bins = glob.glob(input_path + '*.bin')
-        if repr == 'pdg':
-            pool.map(partial(joern_export, outdir=output_path, repr=repr), bins)
-        else:
-            pool.map(partial(joern_export, outdir=output_path, repr=repr), bins)
-
-    else:
-        print('Type error!')
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-
