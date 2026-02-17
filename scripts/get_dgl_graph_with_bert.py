@@ -133,7 +133,7 @@ if __name__ == "__main__":
     input_path = args.input
     output_path = args.out
     # 1. 创建一个 DiGraphDataEntry 实例
-    graph_transformer = DiGraphDataEntry(model_name="/microsoft/codebert-base")
+    graph_transformer = DiGraphDataEntry(model_name="microsoft/codebert-base")
     # 2. 从 DOT 文件中读取图数据
     input_path = input_path + "/" if input_path[-1] != "/" else input_path
     output_path = output_path + "/" if output_path[-1] != "/" else output_path
