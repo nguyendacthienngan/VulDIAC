@@ -39,8 +39,12 @@ def get_all_array(node_dict):
     array_node_list = list(set(array_node_list))
     return array_node_list
     
+    
 def get_all_sensitiveAPI(node_dict):
-    with open("/home/itachi/A/VulDet/CDDFVUL/pdg/sensitive_func.pkl", "rb") as fin:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    sensitive_path = os.path.join(BASE_DIR, "/kaggle/working/VulDIAC/resources/sensitive_func.pkl")
+
+    with open(sensitive_path, "rb") as fin:
         list_sensitive_funcname = pickle.load(fin)
     call_node_list = []
     call_type = "Call"   
@@ -62,7 +66,7 @@ def get_all_integeroverflow_point(node_dict):
         node_type = node_dict[node].node_type
         if node_type == exp_type:
             node_code = node_dict[node].code
-            if node_code.find("="):
+            if "=" in node_code:
                 code = node_code.split('=')[-1].strip()
                 pattern = re.compile("((?:_|[A-Za-z])\w*(?:\s(?:\+|\-|\*|\/)\s(?:_|[A-Za-z])\w*)+)")
             else:
