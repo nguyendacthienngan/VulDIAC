@@ -12,7 +12,9 @@ from transformers import RobertaTokenizer, RobertaModel
 class DiGraphDataEntry:
     def __init__(self, model_name="microsoft/codebert-base"):
         # 初始化 CodeBERT tokenizer
-        self.device = 'cuda:2'
+        self.device = torch.device(
+            "cuda:0" if torch.cuda.is_available() else "cpu"
+        )
         self.tokenizer = RobertaTokenizer.from_pretrained(model_name)
         self.encoder = RobertaModel.from_pretrained(model_name).to(device=self.device)
         self.max_length = 16
