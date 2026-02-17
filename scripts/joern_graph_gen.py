@@ -2,7 +2,8 @@ import os, glob, argparse, subprocess
 from multiprocessing import Pool
 from functools import partial
 
-JOERN_HOME = os.environ.get("JOERN_HOME", "/kaggle/working/joern-2.0.72")
+# JOERN_HOME = os.environ.get("JOERN_HOME", "/kaggle/working/joern-2.0.72")
+JOERN_HOME = "/opt/joern/joern-cli"
 JOERN_PARSE = os.path.join(JOERN_HOME, "joern-parse")
 JOERN_EXPORT = os.path.join(JOERN_HOME, "joern-export")
 JOERN = os.path.join(JOERN_HOME, "joern")
