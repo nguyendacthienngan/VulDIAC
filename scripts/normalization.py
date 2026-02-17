@@ -66,9 +66,19 @@ def normalize(path):
             # print(catefolder)
             pro_one_file(filepath)
 
+def normalize_withcfiles(path):
+    files = os.listdir(path)
+
+    for name in tqdm(files):
+        filepath = os.path.join(path, name)
+
+        if os.path.isfile(filepath) and filepath.endswith(".c"):
+            pro_one_file(filepath)
+
+
 def main():
     args = parse_options()
-    normalize(args.input)
+    normalize_withcfiles(args.input)
 
 
 if __name__ == '__main__':
