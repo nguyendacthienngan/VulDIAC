@@ -7,6 +7,7 @@ JOERN_HOME = "/opt/joern/joern-cli"
 JOERN_PARSE = os.path.join(JOERN_HOME, "joern-parse")
 JOERN_EXPORT = os.path.join(JOERN_HOME, "joern-export")
 JOERN = os.path.join(JOERN_HOME, "joern")
+os.environ["JAVA_OPTS"] = "-Xmx2g" # Kaggle-safe heap sizes
 
 def parse_options():
     p = argparse.ArgumentParser(description='Extracting CPGs.')
