@@ -110,38 +110,68 @@ def store_in_pkl(dot, out, existing_files):
             print('This file encountered an error!')
             print('this file got an error!!!')
 
-
 def main():
     args = parse_options()
-    dir_name = args.input
-    out_path = args.out
-    print("dir_name: ", dir_name)
-    print("out_path: ", out_path)
 
-    if dir_name[-1] == '/':
-        dir_name = dir_name
-    else:
-        dir_name += "/"
+    root_input = args.input.rstrip("/")
+    root_output = args.out.rstrip("/")
 
-    dotfiles = glob.glob(dir_name + '*.dot')
-    print("dotfiles: ", len(dotfiles))
+    print("Input root :", root_input)
+    print("Output root:", root_output)
 
-    if out_path[-1] == '/':
-        out_path = out_path
-    else:
-        out_path += '/'
+    os.makedirs(root_output, exist_ok=True)
 
-    if not os.path.exists(out_path):
-        os.makedirs(out_path)
-        
-    existing_files = glob.glob(out_path + "/*.pkl")
-    existing_files = [f.split('/')[-1].split('.pkl')[0] for f in existing_files]
-    
-    
-    pool = Pool(20)
-    pool.map(partial(store_in_pkl, out=out_path, existing_files=existing_files), dotfiles)
+    # --------------------------------------------------
+    # find all sample folders
+    # --------------------------------------------------
+    sample_dirs = [
+        os.path.join(root_input, d)
+        for d in os.listdir(root_input)
+        if os.path.isdir(os.path.join(root_input, d))
+    ]
 
+    print("Total samples:", len(sample_dirs))
 
+    for sample_dir in sample_dirs:
+
+        sample_name = os.path.basename(sample_dir)
+        print(f"\n[Processing] {sample_name}")
+
+        dotfiles = glob.glob(os.path.join(sample_dir, "*.dot"))
+
+        print("dotfiles:", len(dotfiles))
+
+        if len(dotfiles) == 0:
+            print("Skip (no dot files)")
+            continue
+
+        # output folder per sample
+        out_path = os.path.join(root_output, sample_name)
+        os.makedirs(out_path, exist_ok=True)
+
+        existing_files = glob.glob(out_path + "/*.pkl")
+        existing_files = [
+            f.split('/')[-1].split('.pkl')[0]
+            for f in existing_files
+        ]
+
+        # safer pool size
+        pool_size = max(1, os.cpu_count() // 2)
+        pool = Pool(pool_size)
+
+        pool.map(
+            partial(
+                store_in_pkl,
+                out=out_path + "/",
+                existing_files=existing_files
+            ),
+            dotfiles
+        )
+
+        pool.close()
+        pool.join()
+
+    print("\n✅ All samples processed.")
 import time
 
 if __name__ == '__main__':
