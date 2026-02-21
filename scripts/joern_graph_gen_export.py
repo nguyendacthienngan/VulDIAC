@@ -62,12 +62,21 @@ def joern_export(bin_file, outdir):
 
     print(f"[Export] {name}")
 
+    # Joern version 1.x
+    # cmd = [
+    #     os.path.join(JOERN_PATH, "joern"),
+    #     "--script", SCRIPT_PATH,
+    #     "--params",
+    #     f"cpgFile={bin_file}",
+    #     f"outDir={func_outdir}"
+    # ]
+
+    # Joern version 2.x
     cmd = [
         os.path.join(JOERN_PATH, "joern"),
         "--script", SCRIPT_PATH,
-        "--params",
-        f"cpgFile={bin_file}",
-        f"outDir={func_outdir}"
+        "--param", f"cpgFile={bin_file}",
+        "--param", f"outDir={func_outdir}"
     ]
 
     subprocess.run(cmd)
