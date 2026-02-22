@@ -20,7 +20,7 @@ while True:
 # =====================================================
 
 CODE_COLUMN = "func_before"   # change if needed
-ID_COLUMN = "id"
+ID_COLUMN = "_auto_id"
 LABEL_COLUMN = "vul"
 
 BATCH_SIZE = 5000
@@ -118,7 +118,8 @@ def process_csv(csv_path, output_dir):
     with open(csv_path, newline="", encoding="utf-8", errors="ignore") as f:
         reader = csv.DictReader(f)
 
-        for row in reader:
+        for auto_id, row in enumerate(reader):
+            row["_auto_id"] = auto_id
             batch.append(row)
 
             if len(batch) >= BATCH_SIZE:
