@@ -43,14 +43,22 @@ Genarate joern graph
 # get bins
 python joern_graph_gen.py -i 'input_dir' -o 'output_dir' -t parse
 # get cpg
-python joern_graph_gen.py -i 'input_dir(bins)' -o 'output_dir' -t export -r cpg
+
+(Single batch - Take long time)
+python joern_graph_gen_export.py -i 'input_dir(bins)' -o 'dot_output_dir'  -t export  --pool 2
+
+(Multiple batch - Quicker)
+python run_joern_batch.py -i 'input_dir(bins)' -o 'dot_output_dir'
+
 ```
+
+
 
 Get ACFG
 
 ```
-python get_cfg_graph.py -i 'input_dir' -o 'output_dir'
-python get_dgl_graph_with_bert.py -i 'input_dir' -o 'output_dir'
+python get_cfg_graph.py -i 'dot_output_dir' -o 'pkl_output_dir'
+python get_dgl_graph_with_bert.py -i 'pkl_output_dir' -o 'output_dir'
 ```
 
 Train the model
