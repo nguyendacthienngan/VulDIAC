@@ -1,15 +1,12 @@
 import csv
 import os
-from multiprocessing import Pool, cpu_count
-from functools import partial
-import argparse
 import sys
+from multiprocessing import Pool, cpu_count
+import argparse
 
-# ==============================
-# CONFIG
-# ==============================
-
-# BigVul Dataset has entire linux kernel function (func_before field)
+# =====================================================
+# FIX BIG CSV FIELD LIMIT (BigVul requirement)
+# =====================================================
 maxInt = sys.maxsize
 while True:
     try:
@@ -18,82 +15,105 @@ while True:
     except OverflowError:
         maxInt = int(maxInt / 10)
 
+# =====================================================
+# CONFIG
+# =====================================================
+
 CODE_COLUMN = "func_before"   # change if needed
 ID_COLUMN = "id"
-LABEL_COLUMN = "vul"          # optional
+LABEL_COLUMN = "vul"
 
-BATCH_SIZE = 5000             # rows per worker batch
-FILES_PER_FOLDER = 1000       # avoid millions in one folder
+BATCH_SIZE = 5000
+FILES_PER_FOLDER = 1000
 N_WORKERS = max(cpu_count() - 1, 1)
 
-# ==============================
-# CLEAN CODE FOR JOERN
-# ==============================
+# =====================================================
+# CLEAN + JOERN-STABLE CODE
+# =====================================================
 
-def clean_code(code: str) -> str:
+def clean_code(code: str, idx: int, label: str) -> str:
     """
-    Make code Joern-safe
+    Prepare code for Joern parsing.
+    Adds stable metadata header.
     """
+
     if not code:
-        return ""
+        code = ""
 
-    # remove null bytes (Joern killer)
+    # remove null bytes (Joern crash cause)
     code = code.replace("\x00", "")
 
-    # ensure newline at end
+    header = f"""// BIGVUL_ID: {idx}
+// VUL_LABEL: {label}
+
+"""
+
     if not code.endswith("\n"):
         code += "\n"
 
-    return code
+    return header + code
 
 
-# ==============================
-# WRITE BATCH FUNCTION
-# ==============================
+# =====================================================
+# WRITE BATCH (runs in each worker)
+# =====================================================
 
 def write_batch(rows, output_dir):
 
-    # cache folders already created by THIS worker
-    created_dirs = set()
+    created_dirs = set()  # cache directories per worker
+
+    written = 0
 
     for row in rows:
         try:
             idx = int(row[ID_COLUMN])
-            code = clean_code(row[CODE_COLUMN])
+            label = row.get(LABEL_COLUMN, "0")
 
-            # optional filtering
-            # if row[LABEL_COLUMN] != "1":
-            #     continue
+            code = clean_code(
+                row.get(CODE_COLUMN, ""),
+                idx,
+                label
+            )
 
+            # folder batching
             folder_id = idx // FILES_PER_FOLDER
             folder = os.path.join(output_dir, f"{folder_id:04d}")
 
-            # create folder only once per worker
             if folder not in created_dirs:
                 os.makedirs(folder, exist_ok=True)
                 created_dirs.add(folder)
 
-            filepath = os.path.join(folder, f"{idx}.c")
+            # Joern-stable filename
+            filepath = os.path.join(
+                folder,
+                f"bigvul_{idx:07d}.c"
+            )
 
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(code)
 
+            written += 1
+
         except Exception:
+            # skip corrupted rows silently
             continue
 
-    return len(rows)
+    return written
 
 
-# ==============================
-# STREAM + PARALLEL PIPELINE
-# ==============================
+# =====================================================
+# STREAM CSV + MULTIPROCESS PIPELINE
+# =====================================================
 
 def process_csv(csv_path, output_dir):
+
     os.makedirs(output_dir, exist_ok=True)
 
     pool = Pool(N_WORKERS)
-    batch = []
     jobs = []
+    batch = []
+
+    print(f"Using {N_WORKERS} workers")
 
     with open(csv_path, newline="", encoding="utf-8", errors="ignore") as f:
         reader = csv.DictReader(f)
@@ -102,14 +122,16 @@ def process_csv(csv_path, output_dir):
             batch.append(row)
 
             if len(batch) >= BATCH_SIZE:
-                jobs.append(pool.apply_async(write_batch, (batch,output_dir,)))
+                jobs.append(
+                    pool.apply_async(write_batch, (batch, output_dir))
+                )
                 batch = []
 
-        # remaining rows
         if batch:
-            jobs.append(pool.apply_async(write_batch, (batch,output_dir,)))
+            jobs.append(
+                pool.apply_async(write_batch, (batch, output_dir))
+            )
 
-    # wait for completion
     total = 0
     for j in jobs:
         total += j.get()
@@ -117,17 +139,29 @@ def process_csv(csv_path, output_dir):
     pool.close()
     pool.join()
 
-    print(f"\n✅ Finished writing {total} files")
+    print(f"\n✅ Finished writing {total} Joern-ready C files")
 
 
-# ==============================
+# =====================================================
 # MAIN
-# ==============================
+# =====================================================
 
 if __name__ == "__main__":
-    
-    parser = argparse.ArgumentParser()
-    parser.add_argument("csv_path", help="Path to dataset CSV")
-    parser.add_argument("output_dir", help="Directory to write .c files")
+
+    parser = argparse.ArgumentParser(
+        description="Convert BigVul CSV into Joern-ready C files"
+    )
+
+    parser.add_argument(
+        "csv_path",
+        help="Path to BigVul CSV file"
+    )
+
+    parser.add_argument(
+        "output_dir",
+        help="Directory to store generated .c files"
+    )
+
     args = parser.parse_args()
+
     process_csv(args.csv_path, args.output_dir)
