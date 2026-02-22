@@ -3,10 +3,20 @@ import os
 from multiprocessing import Pool, cpu_count
 from functools import partial
 import argparse
+import sys
 
 # ==============================
 # CONFIG
 # ==============================
+
+# BigVul Dataset has entire linux kernel function (func_before field)
+maxInt = sys.maxsize
+while True:
+    try:
+        csv.field_size_limit(maxInt)
+        break
+    except OverflowError:
+        maxInt = int(maxInt / 10)
 
 CODE_COLUMN = "func_before"   # change if needed
 ID_COLUMN = "id"
@@ -42,6 +52,10 @@ def clean_code(code: str) -> str:
 # ==============================
 
 def write_batch(rows, output_dir):
+
+    # cache folders already created by THIS worker
+    created_dirs = set()
+
     for row in rows:
         try:
             idx = int(row[ID_COLUMN])
@@ -53,7 +67,11 @@ def write_batch(rows, output_dir):
 
             folder_id = idx // FILES_PER_FOLDER
             folder = os.path.join(output_dir, f"{folder_id:04d}")
-            os.makedirs(folder, exist_ok=True)
+
+            # create folder only once per worker
+            if folder not in created_dirs:
+                os.makedirs(folder, exist_ok=True)
+                created_dirs.add(folder)
 
             filepath = os.path.join(folder, f"{idx}.c")
 
@@ -61,7 +79,6 @@ def write_batch(rows, output_dir):
                 f.write(code)
 
         except Exception:
-            # skip broken rows silently
             continue
 
     return len(rows)
