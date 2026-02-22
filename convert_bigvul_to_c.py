@@ -2,13 +2,11 @@ import csv
 import os
 from multiprocessing import Pool, cpu_count
 from functools import partial
+import argparse
 
 # ==============================
 # CONFIG
 # ==============================
-
-CSV_PATH = "bigvul.csv"
-OUTPUT_ROOT = "joern_project/src"
 
 CODE_COLUMN = "func_before"   # change if needed
 ID_COLUMN = "id"
@@ -17,9 +15,6 @@ LABEL_COLUMN = "vul"          # optional
 BATCH_SIZE = 5000             # rows per worker batch
 FILES_PER_FOLDER = 1000       # avoid millions in one folder
 N_WORKERS = max(cpu_count() - 1, 1)
-
-os.makedirs(OUTPUT_ROOT, exist_ok=True)
-
 
 # ==============================
 # CLEAN CODE FOR JOERN
@@ -46,7 +41,7 @@ def clean_code(code: str) -> str:
 # WRITE BATCH FUNCTION
 # ==============================
 
-def write_batch(rows):
+def write_batch(rows, output_dir):
     for row in rows:
         try:
             idx = int(row[ID_COLUMN])
@@ -57,7 +52,7 @@ def write_batch(rows):
             #     continue
 
             folder_id = idx // FILES_PER_FOLDER
-            folder = os.path.join(OUTPUT_ROOT, f"{folder_id:04d}")
+            folder = os.path.join(output_dir, f"{folder_id:04d}")
             os.makedirs(folder, exist_ok=True)
 
             filepath = os.path.join(folder, f"{idx}.c")
@@ -76,25 +71,26 @@ def write_batch(rows):
 # STREAM + PARALLEL PIPELINE
 # ==============================
 
-def process_csv():
+def process_csv(csv_path, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
 
     pool = Pool(N_WORKERS)
     batch = []
     jobs = []
 
-    with open(CSV_PATH, newline="", encoding="utf-8", errors="ignore") as f:
+    with open(csv_path, newline="", encoding="utf-8", errors="ignore") as f:
         reader = csv.DictReader(f)
 
         for row in reader:
             batch.append(row)
 
             if len(batch) >= BATCH_SIZE:
-                jobs.append(pool.apply_async(write_batch, (batch,)))
+                jobs.append(pool.apply_async(write_batch, (batch,output_dir,)))
                 batch = []
 
         # remaining rows
         if batch:
-            jobs.append(pool.apply_async(write_batch, (batch,)))
+            jobs.append(pool.apply_async(write_batch, (batch,output_dir,)))
 
     # wait for completion
     total = 0
@@ -112,4 +108,9 @@ def process_csv():
 # ==============================
 
 if __name__ == "__main__":
-    process_csv()
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("csv_path", help="Path to dataset CSV")
+    parser.add_argument("output_dir", help="Directory to write .c files")
+    args = parser.parse_args()
+    process_csv(args.csv_path, args.output_dir)
