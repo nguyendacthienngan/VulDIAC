@@ -9,178 +9,197 @@ from tqdm import tqdm
 from transformers import RobertaTokenizer, RobertaModel
 
 
+# =========================
+# Graph Processor
+# =========================
 class DiGraphDataEntry:
-    def __init__(self, model_name="microsoft/codebert-base"):
-        # 初始化 CodeBERT tokenizer
-        self.device = torch.device(
-            "cuda:0" if torch.cuda.is_available() else "cpu"
-        )
+
+    def __init__(self,
+                 model_name="microsoft/codebert-base",
+                 batch_size=128,
+                 max_length=16):
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        print("Loading CodeBERT...")
         self.tokenizer = RobertaTokenizer.from_pretrained(model_name)
-        self.encoder = RobertaModel.from_pretrained(model_name).to(device=self.device)
+        self.encoder = RobertaModel.from_pretrained(model_name).to(self.device)
+
+        # 🔥 IMPORTANT
         self.encoder.eval()
-        self.max_length = 16
+
+        self.batch_size = batch_size
+        self.max_length = max_length
+
         self.node_type_map = {
-            'BLOCK': 0, 
-            'CALL': 1, 
-            'CONTROL_STRUCTURE': 2, 
-            'FIELD_IDENTIFIER': 3, 
-            'IDENTIFIER': 4, 
-            'JUMP_TARGET': 5, 
-            'LITERAL': 6, 
-            'LOCAL': 7, 
-            'MEMBER': 8, 
-            'METHOD_PARAMETER_IN': 9, 
-            'METHOD_PARAMETER_OUT': 10, 
-            'METHOD_RETURN': 11, 
-            'RETURN': 12, 
-            'TYPE_DECL': 13, 
-            'UNKNOWN': 14
+            'BLOCK': 0,'CALL': 1,'CONTROL_STRUCTURE': 2,'FIELD_IDENTIFIER': 3,
+            'IDENTIFIER': 4,'JUMP_TARGET': 5,'LITERAL': 6,'LOCAL': 7,
+            'MEMBER': 8,'METHOD_PARAMETER_IN': 9,'METHOD_PARAMETER_OUT': 10,
+            'METHOD_RETURN': 11,'RETURN': 12,'TYPE_DECL': 13,'UNKNOWN': 14
         }
-        
+
         self.edge_type_map = {
-            'CFG': 0, 
-            'DOMINATE': 1, 
-            'POST_DOMINATE': 2, 
-            'REACHING_DEF': 3, 
+            'CFG': 0,
+            'DOMINATE': 1,
+            'POST_DOMINATE': 2,
+            'REACHING_DEF': 3,
         }
-        
-    def process_code(self, code):
-        # 对代码片段进行预处理，生成 tokenizer 的输入张量
-        inputs = self.tokenizer(code, return_tensors="pt", padding="max_length", truncation=True, max_length=self.max_length)
-        return inputs
-    
-    def encode_node_type(self, node_type):
-        # 使用 one-hot 编码节点类型
-        index = self.node_type_map.get(node_type, -1)
-        one_hot = torch.zeros(len(self.node_type_map))
-        if index != -1:
-            one_hot[index] = 1.0
-        return one_hot
 
-    def encode_edge_type(self, edge_type):
-        # 使用 one-hot 编码边类型
-        index = self.edge_type_map.get(edge_type, -1)
-        return index
+    # =========================
+    # Batch CodeBERT Encoding
+    # =========================
+    def encode_codebert_batch(self, codes):
 
-    def networkx_to_dgl(self, nx_graph):
-        # 1. 构建节点 ID 映射
-        node_mapping = {node_id: idx for idx, node_id in enumerate(nx_graph.nodes())}
-        num_nodes = len(node_mapping)
-        
-        # 2. 初始化 DGL 图并添加节点
-        dgl_graph = dgl.DGLGraph()
-        dgl_graph.add_nodes(num_nodes)
-        
-        # 3. 提取并设置节点特征
-        input_ids_list, attention_masks, node_types, line_numbers = [], [], [], []
-        
-        for node_id, data in nx_graph.nodes(data=True):
-            code_snippet = data.get('code', '')
-            inputs = self.process_code(code_snippet)
-            
-            # 添加 input_ids 和 attention_mask
-            input_ids_list.append(inputs['input_ids'].squeeze(0).tolist())
-            attention_masks.append(inputs['attention_mask'].squeeze(0).tolist())
-            
-            # 添加 node_type 和 line_number
-            node_type = data.get('type', 'UNKNOWN')
-            node_types.append(self.encode_node_type(node_type).tolist())
-            line_numbers.append(float(data.get('line_number', -1)))
-            
+        encodings = self.tokenizer(
+            codes,
+            padding=True,
+            truncation=True,
+            max_length=self.max_length,
+            return_tensors="pt"
+        )
+
+        input_ids = encodings["input_ids"]
+        attention_mask = encodings["attention_mask"]
+
+        outputs = []
+
         with torch.no_grad():
-            features = self.encoder(torch.tensor(input_ids_list).to(device=self.device), torch.tensor(attention_masks).to(device=self.device))
-        mean_features = torch.mean(features.last_hidden_state, dim=1)
-        # 设置节点特征
-        # dgl_graph.ndata['input_ids'] = torch.tensor(input_ids_list)
-        # dgl_graph.ndata['attention_mask'] = torch.tensor(attention_masks)
-        dgl_graph.ndata['features'] = mean_features.to('cpu')
-        dgl_graph.ndata['node_type'] = torch.tensor(node_types)
-        dgl_graph.ndata['line_number'] = torch.tensor(line_numbers)
+            for i in range(0, len(input_ids), self.batch_size):
 
-        # 4. 添加边并设置边特征
-        src_nodes, dst_nodes, edge_types = [], [], []
-        
-        for u, v, key, edge_data in nx_graph.edges(keys=True, data=True):
-            edge_type = edge_data.get('type', 'UNKNOWN')
-            # wo/ REACHING_DEF
-            if edge_type == "CDG":
+                batch_ids = input_ids[i:i+self.batch_size].to(self.device)
+                batch_mask = attention_mask[i:i+self.batch_size].to(self.device)
+
+                out = self.encoder(batch_ids, batch_mask)
+                feat = out.last_hidden_state.mean(dim=1)
+
+                outputs.append(feat.cpu())
+
+        return torch.cat(outputs, dim=0)
+
+    # =========================
+    def encode_node_type(self, node_type):
+        vec = torch.zeros(len(self.node_type_map))
+        idx = self.node_type_map.get(node_type, 14)
+        vec[idx] = 1
+        return vec
+
+    # =========================
+    def networkx_to_dgl(self, nx_graph):
+
+        node_mapping = {n: i for i, n in enumerate(nx_graph.nodes())}
+        num_nodes = len(node_mapping)
+
+        dgl_graph = dgl.graph(([], []), num_nodes=num_nodes)
+
+        # -------- Collect node info --------
+        codes = []
+        node_types = []
+        line_numbers = []
+
+        for _, data in nx_graph.nodes(data=True):
+
+            code = data.get("code")
+            if not isinstance(code, str):
+                code = ""
+
+            codes.append(code)
+            node_types.append(
+                self.encode_node_type(data.get("type", "UNKNOWN"))
+            )
+            line_numbers.append(float(data.get("line_number", -1)))
+
+        # -------- FAST BERT --------
+        features = self.encode_codebert_batch(codes)
+
+        dgl_graph.ndata["features"] = features
+        dgl_graph.ndata["node_type"] = torch.stack(node_types)
+        dgl_graph.ndata["line_number"] = torch.tensor(line_numbers)
+
+        # -------- Edges --------
+        src, dst, etype = [], [], []
+
+        if isinstance(nx_graph, nx.MultiDiGraph):
+            edge_iter = nx_graph.edges(keys=True, data=True)
+        else:
+            edge_iter = ((u, v, None, d)
+                         for u, v, d in nx_graph.edges(data=True))
+
+        for u, v, _, data in edge_iter:
+
+            t = data.get("type", "CFG")
+
+            # keep CFG only (VulDiac practice)
+            if t != "CFG":
                 continue
-            
-            if edge_type == "DOMINATE" or edge_type == "REACHING_DEF" or edge_type == "POST_DOMINATE":
-                continue
-            
-            # if edge_type == "DOMINATE" or edge_type == "POST_DOMINATE" or edge_type == "REACHING_DEF" or edge_type == "CDG":
-            #     continue
-            # else:
-            src_nodes.append(node_mapping[u])
-            dst_nodes.append(node_mapping[v])
-            edge_types.append(self.encode_edge_type(edge_type))
-            
-        
-        dgl_graph.add_edges(src_nodes, dst_nodes)
-        
-        # 设置边特征
-        dgl_graph.edata['etype'] = torch.tensor(edge_types)
+
+            src.append(node_mapping[u])
+            dst.append(node_mapping[v])
+            etype.append(self.edge_type_map["CFG"])
+
+        if len(src) > 0:
+            dgl_graph.add_edges(src, dst)
+            dgl_graph.edata["etype"] = torch.tensor(etype)
+        else:
+            dgl_graph.edata["etype"] = torch.zeros(0, dtype=torch.long)
 
         return dgl_graph
 
 
+# =========================
 def parse_options():
-    parser = argparse.ArgumentParser(description='Image-based Vulnerability Detection.')
-    parser.add_argument('-i', '--input', help='The path of a dir which consists of some dot_files')
-    parser.add_argument('-o', '--out', help='The path of output.', required=True)
-    args = parser.parse_args()
-    return args
-    
-if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-i", "--input", required=True)
+    parser.add_argument("-o", "--out", required=True)
+    return parser.parse_args()
+
+
+# =========================
+def main():
+
     args = parse_options()
-    input_path = args.input
-    output_path = args.out
-    # 1. 创建一个 DiGraphDataEntry 实例
-    graph_transformer = DiGraphDataEntry(model_name="microsoft/codebert-base")
-    # 2. 从 DOT 文件中读取图数据
-    input_path = input_path + "/" if input_path[-1] != "/" else input_path
-    output_path = output_path + "/" if output_path[-1] != "/" else output_path
-    # 获取当前文件夹中所有以.pkl结尾的文件的路径
-    # filename = glob.glob(input_path + "/*.pkl")
-    filename = glob.glob(input_path + "/**/*.pkl", recursive=True)
-    
-    print('数据集路径：', input_path)
-    print('输出文件路径：', output_path)
-    print('样本数：', len(filename))
-    
-    fileS = []
 
-    # with open('.././notebook/big_vul_files', 'rb') as f:
-    #     big_vul_files = pickle.load(f)
-    
-    # 遍历当前文件夹中的每个文件
-    for file in tqdm(filename):
-        file_name = file.split("/")[-1].rstrip(".pkl")
-        # filename = sample.split('/')[-1].rstrip(".pkl")
-        # if file_name not in big_vul_files:
-        #     continue
-        
-        out_pkl = output_path + file_name + '.pkl'
-        # 如果文件已存在则跳过
-        if os.path.exists(out_pkl):
+    input_path = args.input.rstrip("/")
+    output_path = args.out.rstrip("/")
+
+    os.makedirs(output_path, exist_ok=True)
+
+    files = glob.glob(input_path + "/**/*.pkl", recursive=True)
+
+    print("Samples:", len(files))
+
+    transformer = DiGraphDataEntry()
+
+    error_files = []
+
+    for file in tqdm(files):
+
+        file_name = os.path.basename(file).replace(".pkl", "")
+
+        # ⭐ Skip global graphs
+        if file_name.startswith("_global"):
             continue
-        
-        # 根据文件加载数据
-        with open(file, 'rb') as f:
-            nx_data = pickle.load(f)
+
+        out_file = f"{output_path}/{file_name}.pkl"
+
+        if os.path.exists(out_file):
+            continue
+
         try:
-            # 将NetworkX图转换为DGL图
-            dgl_data = graph_transformer.networkx_to_dgl(nx_data)
-            
-        except:
-            fileS.append(file)
-            print("Error processing file:", file)
-            continue
-        
-        # 保存DGL图
-        # out_pkl = output_path + filename + '.pkl'
-        with open(out_pkl, 'wb') as f:
-            pickle.dump(dgl_data, f)
+            with open(file, "rb") as f:
+                nx_graph = pickle.load(f)
 
-    print("Error files:", fileS)
+            dgl_graph = transformer.networkx_to_dgl(nx_graph)
+
+            with open(out_file, "wb") as f:
+                pickle.dump(dgl_graph, f)
+
+        except Exception as e:
+            print("Error:", file, e)
+            error_files.append(file)
+
+    print("Finished.")
+    print("Errors:", len(error_files))
+
+
+if __name__ == "__main__":
+    main()
