@@ -17,7 +17,7 @@ import dgl
 import utils
 
 # from graph_dataloader import DiGraphDataEntry, CustomDGLDataset
-from gnn_module import VulGNN, CausalVulGNN
+from gnn_module import CausalVulGNN
 
 def calculate_binary_metrics(labels, predictions):
     # 计算混淆矩阵
@@ -103,27 +103,37 @@ class GNN_Classifier():
     
     def _initialize_(self):
         """Initialize the GNN model."""
-        if self.module == 'VulGNN':
-            self.model = VulGNN(
-                output_dim=self.hidden_dim,
-                n_steps=self.n_steps,
-                n_etypes=self.n_etypes,
-                reduced_size=self.reduced_size,
-                bert_size=self.bert_size,
-                dense_size=self.dense_size,
-                device=self.device
-            ).to(self.device)
-        elif self.module == 'CausalGNN':
-            self.model = CausalVulGNN(
-                num_conv_layers=self.num_conv_layers,
-                hidden_dim=self.hidden_dim,
-                n_steps=self.n_steps,
-                n_etypes=self.n_etypes,
-                reduced_size=self.reduced_size,
-                bert_size=self.bert_size,
-                dense_size=self.dense_size,
-                device=self.device
-            ).to(self.device)
+        # if self.module == 'VulGNN':
+        #     self.model = VulGNN(
+        #         output_dim=self.hidden_dim,
+        #         n_steps=self.n_steps,
+        #         n_etypes=self.n_etypes,
+        #         reduced_size=self.reduced_size,
+        #         bert_size=self.bert_size,
+        #         dense_size=self.dense_size,
+        #         device=self.device
+        #     ).to(self.device)
+        # elif self.module == 'CausalGNN':
+        #     self.model = CausalVulGNN(
+        #         num_conv_layers=self.num_conv_layers,
+        #         hidden_dim=self.hidden_dim,
+        #         n_steps=self.n_steps,
+        #         n_etypes=self.n_etypes,
+        #         reduced_size=self.reduced_size,
+        #         bert_size=self.bert_size,
+        #         dense_size=self.dense_size,
+        #         device=self.device
+        #     ).to(self.device)
+        self.model = CausalVulGNN(
+            num_conv_layers=self.num_conv_layers,
+            hidden_dim=self.hidden_dim,
+            n_steps=self.n_steps,
+            n_etypes=self.n_etypes,
+            reduced_size=self.reduced_size,
+            bert_size=self.bert_size,
+            dense_size=self.dense_size,
+            device=self.device
+        ).to(self.device)
         
     def load_dgl_data(self):
         input_path = self.dataset_path + "/" if self.dataset_path[-1] != "/" else self.dataset_path
@@ -261,13 +271,15 @@ class GNN_Classifier():
 
         
     def test(self):
-        if self.module == 'VulGNN':
-            self.trained_model = VulGNN(output_dim=self.hidden_dim, n_steps=self.n_steps, n_etypes=self.n_etypes, reduced_size=self.reduced_size, 
-                                  bert_size=self.bert_size, dense_size=self.dense_size, device=self.device)
-        elif self.module == 'CausalGNN':
-            self.trained_model = CausalVulGNN(num_conv_layers=self.num_conv_layers, hidden_dim=self.hidden_dim, n_steps=self.n_steps, n_etypes=self.n_etypes, reduced_size=self.reduced_size, 
-                                  bert_size=self.bert_size, dense_size=self.dense_size, device=self.device)
-    
+        # if self.module == 'VulGNN':
+        #     self.trained_model = VulGNN(output_dim=self.hidden_dim, n_steps=self.n_steps, n_etypes=self.n_etypes, reduced_size=self.reduced_size, 
+        #                           bert_size=self.bert_size, dense_size=self.dense_size, device=self.device)
+        # elif self.module == 'CausalGNN':
+            # self.trained_model = CausalVulGNN(num_conv_layers=self.num_conv_layers, hidden_dim=self.hidden_dim, n_steps=self.n_steps, n_etypes=self.n_etypes, reduced_size=self.reduced_size, 
+            #                       bert_size=self.bert_size, dense_size=self.dense_size, device=self.device)
+        self.trained_model = CausalVulGNN(num_conv_layers=self.num_conv_layers, hidden_dim=self.hidden_dim, n_steps=self.n_steps, n_etypes=self.n_etypes, reduced_size=self.reduced_size, 
+                            bert_size=self.bert_size, dense_size=self.dense_size, device=self.device)
+
         self.trained_model.load_state_dict(torch.load(self.model_saved_path))
         self.trained_model.to(self.device)
         self.trained_model.eval()

@@ -17,6 +17,7 @@ class DiGraphDataEntry:
         )
         self.tokenizer = RobertaTokenizer.from_pretrained(model_name)
         self.encoder = RobertaModel.from_pretrained(model_name).to(device=self.device)
+        self.encoder.eval()
         self.max_length = 16
         self.node_type_map = {
             'BLOCK': 0, 
@@ -86,7 +87,8 @@ class DiGraphDataEntry:
             node_types.append(self.encode_node_type(node_type).tolist())
             line_numbers.append(float(data.get('line_number', -1)))
             
-        features = self.encoder(torch.tensor(input_ids_list).to(device=self.device), torch.tensor(attention_masks).to(device=self.device))
+        with torch.no_grad():
+            features = self.encoder(torch.tensor(input_ids_list).to(device=self.device), torch.tensor(attention_masks).to(device=self.device))
         mean_features = torch.mean(features.last_hidden_state, dim=1)
         # 设置节点特征
         # dgl_graph.ndata['input_ids'] = torch.tensor(input_ids_list)
@@ -140,23 +142,24 @@ if __name__ == "__main__":
     input_path = input_path + "/" if input_path[-1] != "/" else input_path
     output_path = output_path + "/" if output_path[-1] != "/" else output_path
     # 获取当前文件夹中所有以.pkl结尾的文件的路径
-    filename = glob.glob(input_path + "/*.pkl")
+    # filename = glob.glob(input_path + "/*.pkl")
+    filename = glob.glob(input_path + "/**/*.pkl", recursive=True)
     
     print('数据集路径：', input_path)
     print('输出文件路径：', output_path)
     print('样本数：', len(filename))
     
     fileS = []
+
+    # with open('.././notebook/big_vul_files', 'rb') as f:
+    #     big_vul_files = pickle.load(f)
     
     # 遍历当前文件夹中的每个文件
     for file in tqdm(filename):
         file_name = file.split("/")[-1].rstrip(".pkl")
         # filename = sample.split('/')[-1].rstrip(".pkl")
-        with open('.././notebook/big_vul_files', 'rb') as f:
-            big_vul_files = pickle.load(f)
-        
-        if file_name not in big_vul_files:
-            continue
+        # if file_name not in big_vul_files:
+        #     continue
         
         out_pkl = output_path + file_name + '.pkl'
         # 如果文件已存在则跳过
