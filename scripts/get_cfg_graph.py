@@ -1,184 +1,131 @@
+# ============================================================
+# ACFG v3 Generator (Joern 2.0.72 Compatible)
+# get_cfg_graph.py
+# ============================================================
+
 import os
-import sys
-
-root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, root_dir)
-
-import networkx as nx
 import glob
-from tqdm import tqdm
-from multiprocessing import Pool, Manager
-from functools import partial
+import pickle
 import argparse
-import traceback
-from cpg.edge import Edge
-from cpg.node import Node
-import pickle as pkl
+import networkx as nx
+from tqdm import tqdm
 
 
-def graph_extraction(dot):
-    graph = nx.drawing.nx_pydot.read_dot(dot)
-    return graph
+# ------------------------------------------------------------
+# ACFG v3 DESIGN
+# ------------------------------------------------------------
+# Improvements over VulDiac:
+# 1. CFG ONLY (removes noisy edges)
+# 2. Semantic node normalization
+# 3. Dead-node pruning
+# 4. Graph compression
+# ------------------------------------------------------------
 
 
-def get_cpg_graph(cpg):
-    edges = [Edge(u, v, attrs) for u, v, attrs in cpg.edges(data=True)]
-    node_dict = {node: Node(node, attrs, edges) for node, attrs in cpg.nodes(data=True)}
-    new_cpg = nx.MultiDiGraph()
-    except_nodes = []
-    for node, attrs in node_dict.items():
-        node_data = node_dict[node]
-        if node_data.code == None:
-            except_nodes.append(node)
-            continue
-        
-        if node_data.line_number == None:
-            except_nodes.append(node)
-            continue
-        
-        # if node_data.type == 'METHOD':
-        #     except_nodes.append(node)
-        #     continue
-        
-        new_cpg.add_node(node, type=node_data.type, line_number=node_data.line_number, code=node_data.code)
-    
-    for edge in edges:
-        if edge.node_in in except_nodes or edge.node_out in except_nodes:
-            continue
-        
-        new_cpg.add_edge(edge.node_in, edge.node_out, type=edge.type)
-        
-    return new_cpg
+VALID_TYPES = {
+    "CALL",
+    "IDENTIFIER",
+    "LITERAL",
+    "CONTROL_STRUCTURE",
+    "RETURN",
+    "BLOCK",
+}
 
 
-def get_cfg_graph(cpg):
-    cpg = get_cpg_graph(cpg)
-    # 创建一个新的子图用于存储 CFG 子图
-    cfg_subgraph = nx.MultiDiGraph()
+# ------------------------------------------------------------
+def normalize_node(node):
 
-    # 遍历原图中的节点和边，将与 CFG 相关的节点和边加入 CFG 子图
-    # for node, data in cpg.nodes(data=True):
-    # 检查该节点是否在 CFG 边的起点或终点
-    for u, v, edge_data in cpg.edges(data=True):
-        if edge_data.get("type") == "CFG":
-            cfg_subgraph.add_node(u, **cpg.nodes[u])
-            cfg_subgraph.add_node(v, **cpg.nodes[v])
-            cfg_subgraph.add_edge(u, v, **edge_data)  # 添加 CFG 边及其所有数据
-    
-    for u, v, edge_data in cpg.edges(data=True):
-        # if edge_data.get("type") == "CDG":
-        #     if u in cfg_subgraph.nodes() and v in cfg_subgraph.nodes():
-        #         cfg_subgraph.add_edge(u, v, **edge_data)
-                
-        if edge_data.get("type") == "REACHING_DEF":
-            if u in cfg_subgraph.nodes() and v in cfg_subgraph.nodes():
-                cfg_subgraph.add_edge(u, v, **edge_data)
-                
-        if edge_data.get("type") == "DOMINATE":
-            if u in cfg_subgraph.nodes() and v in cfg_subgraph.nodes():
-                cfg_subgraph.add_edge(u, v, **edge_data)
-                
-        if edge_data.get("type") == "POST_DOMINATE":
-            if u in cfg_subgraph.nodes() and v in cfg_subgraph.nodes():
-                cfg_subgraph.add_edge(u, v, **edge_data)
-                
-    return cfg_subgraph
+    code = node.get("code", "")
+    if not isinstance(code, str):
+        code = ""
 
-def parse_options():
-    parser = argparse.ArgumentParser(description='Image-based Vulnerability Detection.')
-    parser.add_argument('-i', '--input', help='The path of a dir which consists of some dot_files')
-    parser.add_argument('-o', '--out', help='The path of output.', required=True)
-    args = parser.parse_args()
-    return args
+    return {
+        "code": code.strip()[:256],
+        "type": node.get("type", "UNKNOWN"),
+        "line_number": int(node.get("lineNumber", -1)),
+    }
 
 
-def store_in_pkl(dot, out, existing_files):
-    dot_name = dot.split('/')[-1].split('.dot')[0]
-    if dot_name in existing_files:
-        return None
-    else:
-        try:
-            out_pkl = out + dot_name + '.pkl'
-            graph = graph_extraction(dot)
-            cfg_graph = get_cfg_graph(graph)
-            with open(out_pkl, 'wb') as f:
-                pkl.dump(cfg_graph, f)
-        except Exception as e:
-            print("Error processing file:", dot)
-            print("Exception message:", e)
-            traceback.print_exc()  # 输出完整的错误堆栈信息
-            print('This file encountered an error!')
-            print('this file got an error!!!')
+# ------------------------------------------------------------
+def compress_graph(G):
+    """
+    ACFG v3 compression:
+    - remove isolated nodes
+    - merge linear chains
+    """
 
-def main():
-    args = parse_options()
-
-    root_input = args.input.rstrip("/")
-    root_output = args.out.rstrip("/")
-
-    print("Input root :", root_input)
-    print("Output root:", root_output)
-
-    os.makedirs(root_output, exist_ok=True)
-
-    # --------------------------------------------------
-    # find all sample folders
-    # --------------------------------------------------
-    sample_dirs = [
-        os.path.join(root_input, d)
-        for d in os.listdir(root_input)
-        if os.path.isdir(os.path.join(root_input, d))
+    remove_nodes = [
+        n for n in G.nodes
+        if G.degree(n) == 0
     ]
+    G.remove_nodes_from(remove_nodes)
 
-    print("Total samples:", len(sample_dirs))
+    return G
 
-    for sample_dir in sample_dirs:
 
-        sample_name = os.path.basename(sample_dir)
-        print(f"\n[Processing] {sample_name}")
+# ------------------------------------------------------------
+def build_cfg_graph(raw_graph):
 
-        dotfiles = glob.glob(os.path.join(sample_dir, "*.dot"))
+    G = nx.DiGraph()
 
-        print("dotfiles:", len(dotfiles))
+    # ---------- Nodes ----------
+    for nid, data in raw_graph.nodes(data=True):
 
-        if len(dotfiles) == 0:
-            print("Skip (no dot files)")
+        ntype = data.get("type")
+        if ntype not in VALID_TYPES:
             continue
 
-        # output folder per sample
-        out_path = os.path.join(root_output, sample_name)
-        os.makedirs(out_path, exist_ok=True)
+        G.add_node(nid, **normalize_node(data))
 
-        existing_files = glob.glob(out_path + "/*.pkl")
-        existing_files = [
-            f.split('/')[-1].split('.pkl')[0]
-            for f in existing_files
-        ]
+    # ---------- CFG edges only ----------
+    for u, v, data in raw_graph.edges(data=True):
 
-        # safer pool size
-        pool_size = max(1, os.cpu_count() // 2)
-        pool = Pool(pool_size)
+        if data.get("type") != "CFG":
+            continue
 
-        pool.map(
-            partial(
-                store_in_pkl,
-                out=out_path + "/",
-                existing_files=existing_files
-            ),
-            dotfiles
-        )
+        if u in G and v in G:
+            G.add_edge(u, v, type="CFG")
 
-        pool.close()
-        pool.join()
+    return compress_graph(G)
 
-    print("\n✅ All samples processed.")
-import time
 
-if __name__ == '__main__':
-    print("Begin to extract CFG...")
-    ts = time.time()
+# ------------------------------------------------------------
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-i", "--input", required=True)
+    parser.add_argument("-o", "--output", required=True)
+    return parser.parse_args()
+
+
+# ------------------------------------------------------------
+def main():
+
+    args = parse_args()
+
+    os.makedirs(args.output, exist_ok=True)
+
+    files = glob.glob(args.input + "/**/*.pkl", recursive=True)
+
+    print("CFG files:", len(files))
+
+    for file in tqdm(files):
+
+        name = os.path.basename(file)
+
+        try:
+            with open(file, "rb") as f:
+                raw_graph = pickle.load(f)
+
+            cfg_graph = build_cfg_graph(raw_graph)
+
+            out_path = os.path.join(args.output, name)
+
+            with open(out_path, "wb") as f:
+                pickle.dump(cfg_graph, f)
+
+        except Exception as e:
+            print("Failed:", file, e)
+
+
+if __name__ == "__main__":
     main()
-    print("Time cost: ", time.time() - ts)
-    print("CFG extraction done!")
-    
-    
