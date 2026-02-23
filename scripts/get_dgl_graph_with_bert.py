@@ -8,7 +8,11 @@ import os
 from tqdm import tqdm
 from transformers import RobertaTokenizer, RobertaModel
 
-
+NOISE_TYPES = {
+    "LITERAL",
+    "UNKNOWN",
+    "TYPE_DECL"
+}
 # =========================
 # Graph Processor
 # =========================
@@ -44,37 +48,28 @@ class DiGraphDataEntry:
             'POST_DOMINATE': 2,
             'REACHING_DEF': 3,
         }
+        self.embedding_cache = {}
 
     # =========================
     # Batch CodeBERT Encoding
     # =========================
     def encode_codebert_batch(self, codes):
 
-        encodings = self.tokenizer(
-            codes,
-            padding=True,
-            truncation=True,
-            max_length=self.max_length,
-            return_tensors="pt"
-        )
+        uncached = []
+        uncached_idx = []
 
-        input_ids = encodings["input_ids"]
-        attention_mask = encodings["attention_mask"]
+        for i, c in enumerate(codes):
+            if c not in self.embedding_cache:
+                uncached.append(c)
+                uncached_idx.append(i)
 
-        outputs = []
+        if len(uncached) > 0:
+            new_embeds = self._encode_raw(uncached)
 
-        with torch.no_grad():
-            for i in range(0, len(input_ids), self.batch_size):
+            for idx, emb in zip(uncached_idx, new_embeds):
+                self.embedding_cache[codes[idx]] = emb
 
-                batch_ids = input_ids[i:i+self.batch_size].to(self.device)
-                batch_mask = attention_mask[i:i+self.batch_size].to(self.device)
-
-                out = self.encoder(batch_ids, batch_mask)
-                feat = out.last_hidden_state.mean(dim=1)
-
-                outputs.append(feat.cpu())
-
-        return torch.cat(outputs, dim=0)
+        return torch.stack([self.embedding_cache[c] for c in codes])
 
     # =========================
     def encode_node_type(self, node_type):
@@ -83,6 +78,14 @@ class DiGraphDataEntry:
         vec[idx] = 1
         return vec
 
+    def extract_semantic_code(data):
+
+        for key in ["code", "name", "label", "typeFullName"]:
+            val = data.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
+
+        return "UNKNOWN"
     # =========================
     def networkx_to_dgl(self, nx_graph):
 
@@ -98,7 +101,9 @@ class DiGraphDataEntry:
 
         for _, data in nx_graph.nodes(data=True):
 
-            code = data.get("code")
+            if data.get("type") in NOISE_TYPES:
+                continue
+            code = self.extract_semantic_code(data)
             if not isinstance(code, str):
                 code = ""
 
@@ -108,6 +113,9 @@ class DiGraphDataEntry:
             )
             line_numbers.append(float(data.get("line_number", -1)))
 
+
+        if len(codes) == 0:
+            raise ValueError("Graph has zero valid nodes")
         # -------- FAST BERT --------
         features = self.encode_codebert_batch(codes)
 
@@ -182,6 +190,7 @@ def main():
         out_file = f"{output_path}/{file_name}.pkl"
 
         if os.path.exists(out_file):
+            print("Already exist: ", out_file)
             continue
 
         try:
@@ -190,7 +199,10 @@ def main():
 
             dgl_graph = transformer.networkx_to_dgl(nx_graph)
 
+            if len(nx_graph.nodes()) < 2:
+                return None
             with open(out_file, "wb") as f:
+                print("Writing graph to : ", out_file)
                 pickle.dump(dgl_graph, f)
 
         except Exception as e:
