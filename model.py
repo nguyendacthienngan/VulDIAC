@@ -74,7 +74,7 @@ class GNN_Classifier():
         self.dataset_path = dataset_path
         self.model_name = model_name
         self.device = device
-        self.model_saved_path = './saved_model/' + model_name + '_gnn_trained_best_f1_.pt'
+        self.model_saved_path = result_save_path + model_name + '_gnn_trained_best_f1_.pt'
         
         self._config_(config)
         self._initialize_()

@@ -22,10 +22,11 @@ def main():
     data_path = args.input
     model_name = args.model_name
     device = args.device
+    model_path = args.model_path
     config = init_config()
     print(config)
     
-    classifier = GNN_Classifier(config=config, dataset_path=data_path, model_name=model_name, device=device)
+    classifier = GNN_Classifier(config=config, dataset_path=data_path, model_name=model_name, device=device, result_save_path=model_path)
     classifier.preparation_data()
     classifier.train()
 
