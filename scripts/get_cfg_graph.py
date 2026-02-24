@@ -33,9 +33,25 @@ VALID_TYPES = {
 }
 
 
+
 # ============================================================
 # UTILITIES
 # ============================================================
+def extract_label(dot_path):
+    """
+    Extract label from parent folder name.
+
+    sample_77_1/func.dot → 1
+    """
+    folder = os.path.basename(os.path.dirname(dot_path))
+
+    try:
+        label = int(folder.split("_")[-1])
+    except:
+        label = 0
+
+    return label
+
 
 def clean_attr(x):
     """Remove DOT quotes safely"""
@@ -160,14 +176,21 @@ def main():
 
     for file in tqdm(files):
 
-        name = os.path.basename(file).replace(".dot", ".pkl")
-        out = os.path.join(args.output, name)
+        # name = os.path.basename(file).replace(".dot", ".pkl")
+        # out = os.path.join(args.output, name)
 
         try:
             # ✅ READ DOT GRAPH
             dot_graph = nx.drawing.nx_pydot.read_dot(file)
 
             G = build_cfg_graph(dot_graph)
+
+            label = extract_label(file)
+
+            base = os.path.basename(file).replace(".dot", "")
+            out_name = f"{base}_{label}.pkl"
+
+            out = os.path.join(args.output, out_name)
 
             if save_graph(G, out):
                 saved += 1
