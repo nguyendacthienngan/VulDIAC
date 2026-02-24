@@ -77,12 +77,12 @@ class GNN_Classifier():
         self.model_saved_path = result_save_path + model_name + '_gnn_trained_best_f1_.pt'
 
         self.checkpoint_path = os.path.join(
-            self.result_save_path,
+            result_save_path,
             "last_checkpoint.pt"
         )
 
         self.best_model_path = os.path.join(
-            self.result_save_path,
+            result_save_path,
             "best_model.pt"
         )
         self._config_(config)
