@@ -7,6 +7,7 @@ def parse_options():
     parser = argparse.ArgumentParser(description='VulDet training.')
     parser.add_argument('-i', '--input', help='The dir path of data.', type=str, required=True)
     parser.add_argument('-m', '--model_name', help='The dataset name.', type=str, required=True)
+    parser.add_argument('-p', '--model_path', help='The saved model path.', type=str, required=True)
     parser.add_argument('-d', '--device', help='The device.', type=str, required=True)
     args = parser.parse_args()
     return args
