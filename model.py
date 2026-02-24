@@ -86,6 +86,7 @@ class GNN_Classifier():
             "best_model.pt"
         )
         self._config_(config)
+        self.config = config # Only for saving checkpoint (Optional)
         self._initialize_()
         
     def _config_(self, config):
