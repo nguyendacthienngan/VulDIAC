@@ -138,8 +138,8 @@ class CausalVulGNN(torch.nn.Module):
         x = F.relu(x)
         x = self.causal_fc2_bn(x)
         x = self.causal_fc2(x)
-        out = F.softmax(x, dim=-1)
-        return out
+        # out = F.softmax(x, dim=-1)
+        return x
     
     def spurious_readout_layer(self, x):
         x = self.spurious_fc1_bn(x)
@@ -163,6 +163,6 @@ class CausalVulGNN(torch.nn.Module):
         x = F.relu(x)
         x = self.concat_fc2_bn(x)
         x = self.concat_fc2(x)
-        out = F.softmax(x, dim=-1)
-        return out
+        # out = F.softmax(x, dim=-1)
+        return x
 

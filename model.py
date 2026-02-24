@@ -188,7 +188,17 @@ class GNN_Classifier():
     
     
     def compute_loss(self, out_causal, out_spurious, out_context, labels, causal_features, spurious_features):
-        uniform_targets = torch.ones_like(out_spurious, dtype=torch.float).to(self.device) / self.num_classes
+        # uniform_targets = torch.ones_like(out_spurious, dtype=torch.float).to(self.device) / self.num_classes
+        uniform_targets = torch.full(
+            out_spurious.shape,
+            1.0 / self.num_classes,
+            device=self.device,
+            dtype=out_spurious.dtype
+        )
+
+        # numerical stability
+        out_spurious = torch.clamp(out_spurious, min=-20, max=0)
+
         loss_causal = self.loss_fn_causal(out_causal, labels)
         loss_spurious = self.loss_fn_spurious(out_spurious, uniform_targets)
         loss_context = self.loss_fn_context(out_context, labels)
