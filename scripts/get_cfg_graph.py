@@ -1,6 +1,7 @@
 # ============================================================
-# ACFG v3 Generator (Joern 2.0.72 Compatible)
-# get_cfg_graph.py
+# ACFG v3 CFG GRAPH GENERATOR
+# Joern 2.0.72 + NetworkX 3.x Compatible
+# Research-grade + Kaggle-safe
 # ============================================================
 
 import os
@@ -11,76 +12,101 @@ import networkx as nx
 from tqdm import tqdm
 
 
-# ------------------------------------------------------------
-# ACFG v3 DESIGN
-# ------------------------------------------------------------
-# Improvements over VulDiac:
-# 1. CFG ONLY (removes noisy edges)
-# 2. Semantic node normalization
-# 3. Dead-node pruning
-# 4. Graph compression
-# ------------------------------------------------------------
-
+# ============================================================
+# VALID NODE TYPES (ACFG v3)
+# ============================================================
 
 VALID_TYPES = {
+    "METHOD",
+    "METHOD_PARAMETER_IN",
+    "METHOD_PARAMETER_OUT",
+    "METHOD_RETURN",
+    "BLOCK",
     "CALL",
     "IDENTIFIER",
     "LITERAL",
     "CONTROL_STRUCTURE",
     "RETURN",
-    "BLOCK",
+    "FIELD_IDENTIFIER",
+    "JUMP_TARGET",
+    "UNKNOWN"
 }
 
 
-# ------------------------------------------------------------
-def normalize_node(node):
+# ============================================================
+# UTILITIES
+# ============================================================
 
-    code = node.get("code", "")
-    if not isinstance(code, str):
-        code = ""
+def clean_attr(x):
+    """Remove DOT quotes safely"""
+    if x is None:
+        return ""
+    return str(x).strip('"')
+
+
+def normalize_node(attrs):
+
+    code = clean_attr(attrs.get("code", ""))
+    typ = clean_attr(attrs.get("type", "UNKNOWN"))
+
+    try:
+        line = int(clean_attr(attrs.get("line_number", -1)))
+    except:
+        line = -1
 
     return {
-        "code": code.strip()[:256],
-        "type": node.get("type", "UNKNOWN"),
-        "line_number": int(node.get("lineNumber", -1)),
+        "code": code[:256],
+        "type": typ,
+        "line_number": line,
     }
 
 
-# ------------------------------------------------------------
+# ============================================================
+# GRAPH COMPRESSION (OOM PREVENTION)
+# ============================================================
+
 def compress_graph(G):
     """
     ACFG v3 compression:
-    - remove isolated nodes
-    - merge linear chains
+      1. remove isolated nodes
+      2. remove tiny useless nodes
     """
 
     remove_nodes = [
         n for n in G.nodes
         if G.degree(n) == 0
     ]
+
     G.remove_nodes_from(remove_nodes)
 
     return G
 
 
-# ------------------------------------------------------------
-def build_cfg_graph(raw_graph):
+# ============================================================
+# BUILD CFG GRAPH
+# ============================================================
+
+def build_cfg_graph(dot_graph):
 
     G = nx.DiGraph()
 
     # ---------- Nodes ----------
-    for nid, data in raw_graph.nodes(data=True):
+    for nid, attrs in dot_graph.nodes(data=True):
 
-        ntype = data.get("type")
+        ntype = clean_attr(attrs.get("type"))
+
         if ntype not in VALID_TYPES:
+            print(ntype + " is not valid")
             continue
 
-        G.add_node(nid, **normalize_node(data))
+        G.add_node(nid, **normalize_node(attrs))
 
-    # ---------- CFG edges only ----------
-    for u, v, data in raw_graph.edges(data=True):
+    # ---------- CFG edges ----------
+    for u, v, attrs in dot_graph.edges(data=True):
 
-        if data.get("type") != "CFG":
+        etype = clean_attr(attrs.get("type"))
+
+        if etype != "CFG":
             continue
 
         if u in G and v in G:
@@ -89,7 +115,25 @@ def build_cfg_graph(raw_graph):
     return compress_graph(G)
 
 
-# ------------------------------------------------------------
+# ============================================================
+# SAVE GRAPH (NetworkX 3.x SAFE)
+# ============================================================
+
+def save_graph(G, out_path):
+
+    if len(G.nodes) == 0:
+        return False
+
+    with open(out_path, "wb") as f:
+        pickle.dump(G, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    return True
+
+
+# ============================================================
+# ARGUMENTS
+# ============================================================
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--input", required=True)
@@ -97,35 +141,50 @@ def parse_args():
     return parser.parse_args()
 
 
-# ------------------------------------------------------------
+# ============================================================
+# MAIN
+# ============================================================
+
 def main():
 
     args = parse_args()
 
     os.makedirs(args.output, exist_ok=True)
 
-    files = glob.glob(args.input + "/**/*.pkl", recursive=True)
+    files = glob.glob(args.input + "/**/*.dot", recursive=True)
 
-    print("CFG files:", len(files))
+    print("DOT files:", len(files))
+
+    saved = 0
+    skipped = 0
 
     for file in tqdm(files):
 
-        name = os.path.basename(file)
+        name = os.path.basename(file).replace(".dot", ".pkl")
+        out = os.path.join(args.output, name)
 
         try:
-            with open(file, "rb") as f:
-                raw_graph = pickle.load(f)
+            # ✅ READ DOT GRAPH
+            dot_graph = nx.drawing.nx_pydot.read_dot(file)
 
-            cfg_graph = build_cfg_graph(raw_graph)
+            G = build_cfg_graph(dot_graph)
 
-            out_path = os.path.join(args.output, name)
-
-            with open(out_path, "wb") as f:
-                pickle.dump(cfg_graph, f)
+            if save_graph(G, out):
+                saved += 1
+            else:
+                skipped += 1
 
         except Exception as e:
             print("Failed:", file, e)
+            skipped += 1
 
+    print("\n==============================")
+    print("Saved graphs :", saved)
+    print("Skipped      :", skipped)
+    print("==============================")
+
+
+# ============================================================
 
 if __name__ == "__main__":
     main()

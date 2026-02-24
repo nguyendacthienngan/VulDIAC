@@ -1,102 +1,36 @@
 # ============================================================
-# ACFG v3 → DGL Graph Builder (OOM SAFE)
-# get_dgl_graph_with_bert.py
+# DGL GRAPH BUILDER v3 (ACFG v3 Compatible)
+# VulDiac — Joern 2.0.72 SAFE VERSION
 # ============================================================
 
 import os
 import glob
-import pickle
 import argparse
+import pickle
+import gc
+
 import torch
 import dgl
 import networkx as nx
+
 from tqdm import tqdm
-from transformers import RobertaTokenizer, RobertaModel
+from transformers import AutoTokenizer, AutoModel
 
 
 # ------------------------------------------------------------
-class ACFGv3Processor:
+# CONFIG (OOM SAFE)
+# ------------------------------------------------------------
 
-    def __init__(self,
-                 model="microsoft/codebert-base",
-                 batch_size=32,
-                 max_length=32):
+MODEL_NAME = "microsoft/codebert-base"
 
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
-
-        print("Loading CodeBERT...")
-
-        self.tokenizer = RobertaTokenizer.from_pretrained(model)
-        self.encoder = RobertaModel.from_pretrained(model).to(self.device)
-        self.encoder.eval()
-
-        self.batch_size = batch_size
-        self.max_length = max_length
-
-    # --------------------------------------------------------
-    def encode_batch(self, codes):
-
-        # prevent tokenizer crash
-        codes = [c if c.strip() else "empty" for c in codes]
-
-        enc = self.tokenizer(
-            codes,
-            padding=True,
-            truncation=True,
-            max_length=self.max_length,
-            return_tensors="pt"
-        )
-
-        feats = []
-
-        with torch.no_grad():
-            for i in range(0, len(codes), self.batch_size):
-
-                ids = enc["input_ids"][i:i+self.batch_size].to(self.device)
-                mask = enc["attention_mask"][i:i+self.batch_size].to(self.device)
-
-                out = self.encoder(ids, mask)
-                emb = out.last_hidden_state.mean(dim=1)
-
-                feats.append(emb.cpu())
-
-        torch.cuda.empty_cache()
-
-        return torch.cat(feats, dim=0)
-
-    # --------------------------------------------------------
-    def nx_to_dgl(self, G):
-
-        mapping = {n: i for i, n in enumerate(G.nodes())}
-
-        dgl_g = dgl.graph(([], []), num_nodes=len(mapping))
-
-        codes = []
-        lines = []
-
-        for _, data in G.nodes(data=True):
-            codes.append(data.get("code", ""))
-            lines.append(float(data.get("line_number", -1)))
-
-        features = self.encode_batch(codes)
-
-        dgl_g.ndata["features"] = features
-        dgl_g.ndata["line_number"] = torch.tensor(lines)
-
-        src, dst = [], []
-
-        for u, v in G.edges():
-            src.append(mapping[u])
-            dst.append(mapping[v])
-
-        if len(src):
-            dgl_g.add_edges(src, dst)
-
-        return dgl_g
+MAX_NODE = 400          # HARD CAP → prevents OOM
+MAX_LEN = 64            # token length
+BATCH_SIZE = 64         # embedding batch
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
+# ------------------------------------------------------------
+# ARGUMENTS
 # ------------------------------------------------------------
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -106,6 +40,141 @@ def parse_args():
 
 
 # ------------------------------------------------------------
+# LOAD MODEL (ONCE ONLY)
+# ------------------------------------------------------------
+print("Loading CodeBERT...")
+
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModel.from_pretrained(MODEL_NAME)
+
+model.eval()
+model.to(DEVICE)
+
+
+# ------------------------------------------------------------
+# NODE TYPE ENCODING
+# ------------------------------------------------------------
+TYPE_MAP = {
+    "CALL": 1,
+    "IDENTIFIER": 2,
+    "LITERAL": 3,
+    "CONTROL_STRUCTURE": 4,
+    "RETURN": 5,
+    "BLOCK": 6,
+}
+
+
+def type_id(t):
+    return TYPE_MAP.get(t, 0)
+
+
+# ------------------------------------------------------------
+# GRAPH COMPRESSION
+# ------------------------------------------------------------
+def compress_graph(G):
+
+    if G.number_of_nodes() <= MAX_NODE:
+        return G
+
+    # keep highest degree nodes
+    deg = sorted(G.degree, key=lambda x: x[1], reverse=True)
+    keep = set(n for n, _ in deg[:MAX_NODE])
+
+    return G.subgraph(keep).copy()
+
+
+# ------------------------------------------------------------
+# BERT EMBEDDINGS (BATCHED)
+# ------------------------------------------------------------
+@torch.no_grad()
+def encode_texts(texts):
+
+    embeddings = []
+
+    for i in range(0, len(texts), BATCH_SIZE):
+
+        batch = texts[i:i+BATCH_SIZE]
+
+        tokens = tokenizer(
+            batch,
+            padding=True,
+            truncation=True,
+            max_length=MAX_LEN,
+            return_tensors="pt"
+        ).to(DEVICE)
+
+        outputs = model(**tokens)
+        cls = outputs.last_hidden_state[:, 0, :]
+
+        embeddings.append(cls.cpu())
+
+        del tokens, outputs, cls
+        torch.cuda.empty_cache()
+
+    return torch.cat(embeddings, dim=0)
+
+
+# ------------------------------------------------------------
+# BUILD DGL GRAPH
+# ------------------------------------------------------------
+def build_dgl_graph(nx_g):
+
+    nx_g = compress_graph(nx_g)
+
+    nodes = list(nx_g.nodes())
+
+    if len(nodes) == 0:
+        return None
+
+    id_map = {nid: i for i, nid in enumerate(nodes)}
+
+    src = []
+    dst = []
+
+    for u, v in nx_g.edges():
+        if u in id_map and v in id_map:
+            src.append(id_map[u])
+            dst.append(id_map[v])
+
+    g = dgl.graph((src, dst), num_nodes=len(nodes))
+
+    # ---------- NODE FEATURES ----------
+    texts = []
+    types = []
+    lines = []
+
+    for n in nodes:
+        data = nx_g.nodes[n]
+
+        texts.append(data.get("code", ""))
+        types.append(type_id(data.get("type", "")))
+        lines.append(data.get("line_number", -1))
+
+    emb = encode_texts(texts)
+
+    g.ndata["feat"] = emb.half()  # fp16 saves VRAM
+    g.ndata["type"] = torch.tensor(types)
+    g.ndata["line"] = torch.tensor(lines)
+
+    return g
+
+
+# ------------------------------------------------------------
+# SAFE SAVE
+# ------------------------------------------------------------
+def save_graph(g, path):
+
+    tmp = path + ".tmp"
+
+    with open(tmp, "wb") as f:
+        pickle.dump(g, f)
+
+    os.replace(tmp, path)
+
+
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
 def main():
 
     args = parse_args()
@@ -114,37 +183,38 @@ def main():
 
     files = glob.glob(args.input + "/**/*.pkl", recursive=True)
 
-    print("Samples:", len(files))
-
-    processor = ACFGv3Processor()
+    print("CFG graphs:", len(files))
 
     errors = []
 
     for file in tqdm(files):
 
-        name = os.path.basename(file)
-
         try:
             with open(file, "rb") as f:
-                nx_graph = pickle.load(f)
+                nx_g = pickle.load(f)
 
-            if len(nx_graph.nodes) == 0:
+            g = build_dgl_graph(nx_g)
+
+            if g is None:
                 continue
 
-            dgl_graph = processor.nx_to_dgl(nx_graph)
+            name = os.path.basename(file)
+            out = os.path.join(args.output, name)
 
-            out_file = os.path.join(args.output, name)
+            save_graph(g, out)
 
-            with open(out_file, "wb") as f:
-                pickle.dump(dgl_graph, f)
+            del g, nx_g
+            gc.collect()
+            torch.cuda.empty_cache()
 
         except Exception as e:
             print("Error:", file, e)
             errors.append(file)
 
-    print("Finished.")
+    print("\nFinished.")
     print("Errors:", len(errors))
 
 
+# ------------------------------------------------------------
 if __name__ == "__main__":
     main()
