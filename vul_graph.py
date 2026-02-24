@@ -1,5 +1,6 @@
 import argparse
 import yaml
+import os
 from model import GNN_Classifier
 
 
@@ -27,6 +28,7 @@ def main():
     config = init_config()
     print(config)
     
+    os.makedirs(model_path, exist_ok=True)
     classifier = GNN_Classifier(config=config, dataset_path=data_path, model_name=model_name, device=device, result_save_path=model_path)
     classifier.preparation_data()
     classifier.train(resume=True)
