@@ -29,7 +29,7 @@ def main():
     
     classifier = GNN_Classifier(config=config, dataset_path=data_path, model_name=model_name, device=device, result_save_path=model_path)
     classifier.preparation_data()
-    classifier.train()
+    classifier.train(resume=True)
 
 # python vul_graph.py -i ./dgl/devign_cfg/ -m ffmpeg -d cuda:0
 

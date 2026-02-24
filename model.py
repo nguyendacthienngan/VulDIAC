@@ -75,7 +75,16 @@ class GNN_Classifier():
         self.model_name = model_name
         self.device = device
         self.model_saved_path = result_save_path + model_name + '_gnn_trained_best_f1_.pt'
-        
+
+        self.checkpoint_path = os.path.join(
+            self.result_save_path,
+            "last_checkpoint.pt"
+        )
+
+        self.best_model_path = os.path.join(
+            self.result_save_path,
+            "best_model.pt"
+        )
         self._config_(config)
         self._initialize_()
         
@@ -209,6 +218,36 @@ class GNN_Classifier():
         return total_loss, loss_causal
     
     
+    def save_checkpoint(self, epoch):
+        checkpoint = {
+            "epoch": epoch,
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "config": self.config
+        }
+
+        torch.save(checkpoint, self.checkpoint_path)
+        print(f"✅ Checkpoint saved at epoch {epoch}")
+
+    def load_checkpoint(self):
+        if not os.path.exists(self.checkpoint_path):
+            print("⚠️ No checkpoint found. Training from scratch.")
+            return 0
+
+        print("🔄 Loading checkpoint...")
+
+        checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
+
+        self.model.load_state_dict(checkpoint["model_state_dict"])
+        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+        start_epoch = checkpoint["epoch"] + 1
+
+        print(f"✅ Resumed from epoch {start_epoch}")
+
+        return start_epoch
+    
+
     def train_epoch(self):
         self.model.train()
         total_loss, labels, predictions = 0, [], []
@@ -316,16 +355,25 @@ class GNN_Classifier():
         return score_dict
         
         
-    def train(self):
+    def train(self, resume=False):
+
+        start_epoch = 0
+
+        if resume:
+            start_epoch = self.load_checkpoint()
         valid_f1 = 0.0
         train_table = PrettyTable(['type', 'epoch', 'loss', 'Accuracy', 'Precision', 'Recall', 'F1', 'FNR', 'FPR'])
         valid_table = PrettyTable(['type', 'epoch', 'loss', 'Accuracy', 'Precision', 'Recall', 'F1', 'FNR', 'FPR'])
-        for epoch in range(self.epochs):
+        for epoch in range(start_epoch, self.epochs):
             print(f'Epoch {epoch + 1}/{self.epochs}')
             train_loss, train_score = self.train_epoch()
             train_table.add_row(["tra", str(epoch + 1), format(train_loss, '.4f')] + [train_score[j] for j in train_score])
             print(train_table)
             val_loss, val_score = self.evaluation()
+
+            # ✅ SAVE EVERY EPOCH (important for Kaggle)
+            self.save_checkpoint(epoch)
+
             valid_table.add_row(["valid", str(epoch + 1), format(val_loss, '.4f')] + [val_score[j] for j in val_score])
             print(valid_table)
             print("\n")
